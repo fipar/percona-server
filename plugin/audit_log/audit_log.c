@@ -64,6 +64,7 @@ char *audit_log_syslog_ident;
 char default_audit_log_syslog_ident[] = "percona-audit";
 ulong audit_log_syslog_facility= 0;
 ulong audit_log_syslog_priority= 0;
+ulonglong audit_log_num_rows_threshold= 0;
 static char *audit_log_exclude_accounts= NULL;
 static char *audit_log_include_accounts= NULL;
 static char *audit_log_exclude_databases= NULL;
@@ -589,6 +590,7 @@ char *audit_log_general_record(char *buf, size_t buflen,
                      "  OS_USER=\"%s\"\n"
                      "  IP=\"%s\"\n"
                      "  DB=\"%s\"\n"
+		     "  NUM_ROWS=\"%d\n\""
                      "/>\n",
 
                      "<AUDIT_RECORD>\n"
@@ -604,6 +606,7 @@ char *audit_log_general_record(char *buf, size_t buflen,
                      "  <OS_USER>%s</OS_USER>\n"
                      "  <IP>%s</IP>\n"
                      "  <DB>%s</DB>\n"
+		     "  <NUM_ROWS>%d</NUM_ROWS>\n"
                      "</AUDIT_RECORD>\n",
 
                      "{\"audit_record\":"
@@ -618,10 +621,11 @@ char *audit_log_general_record(char *buf, size_t buflen,
                        "\"host\":\"%s\","
                        "\"os_user\":\"%s\","
                        "\"ip\":\"%s\","
-                       "\"db\":\"%s\"}}\n",
+                       "\"db\":\"%s\"}}\n"
+		     "\"num_rows\":\"%d\"}}",
 
                      "\"%s\",\"%s\",\"%s\",\"%s\",\"%lu\",%d,\"%s\",\"%s\","
-                     "\"%s\",\"%s\",\"%s\",\"%s\"\n" };
+                     "\"%s\",\"%s\",\"%s\",\"%s\",%d\n" };
 
   query_length= my_charset_utf8mb4_general_ci.mbmaxlen *
                 event->general_query.length;
@@ -682,7 +686,7 @@ char *audit_log_general_record(char *buf, size_t buflen,
                     make_timestamp(timestamp, sizeof(timestamp), t),
                     event->general_sql_command.str,
                     event->general_thread_id,
-                    status, query, user, host, external_user, ip, db);
+                    status, query, user, host, external_user, ip, db, event->general_rows-1);
 
   /* make sure that record is not truncated */
   DBUG_ASSERT(endptr + *outlen <= buf + buflen);
@@ -845,6 +849,7 @@ int init_new_log_file()
     opts.sync_on_write= audit_log_strategy == SYNCHRONOUS;
     opts.use_buffer= audit_log_strategy < SEMISYNCHRONOUS;
     opts.buffer_size= audit_log_buffer_size;
+    opts.num_rows_threshold= audit_log_num_rows_threshold;
     opts.can_drop_data= audit_log_strategy == PERFORMANCE;
     opts.header= audit_log_header;
     opts.footer= audit_log_footer;
@@ -1340,14 +1345,18 @@ int audit_log_notify(MYSQL_THD thd MY_ATTRIBUTE((unused)),
   if (local->skip_session)
     return 0;
 
+  const struct mysql_event_general *event_general=
+    (const struct mysql_event_general *) event;
+
+  if (((event_general->general_rows - 1) < audit_log_num_rows_threshold) && (audit_log_num_rows_threshold > 0))
+    return;
+  
   if (event_class == MYSQL_AUDIT_GENERAL_CLASS)
   {
-    const struct mysql_event_general *event_general=
-      (const struct mysql_event_general *) event;
     switch (event_general->event_subclass)
     {
     case MYSQL_AUDIT_GENERAL_STATUS:
-      if (local->skip_query)
+      if (local->skip_query && ((event_general->general_rows -1) < audit_log_num_rows_threshold))
         break;
 
       /* use allocated buffer if available */
@@ -1920,6 +1929,11 @@ static MYSQL_THDVAR_ULONG(local_ptr,
        PLUGIN_VAR_READONLY | PLUGIN_VAR_NOSYSVAR | PLUGIN_VAR_NOCMDOPT,
        "Local store ptr.", NULL, NULL, 0, 0, ULONG_MAX, 0);
 
+static MYSQL_SYSVAR_ULONGLONG(num_rows_threshold, audit_log_num_rows_threshold,
+    PLUGIN_VAR_OPCMDARG,
+    "Queries returning more than this number of rows will be logged",
+    NULL, NULL, 0UL, 0UL, ULONG_MAX, 1L);
+
 static struct st_mysql_sys_var* audit_log_system_variables[] =
 {
   MYSQL_SYSVAR(file),
@@ -1927,6 +1941,7 @@ static struct st_mysql_sys_var* audit_log_system_variables[] =
   MYSQL_SYSVAR(strategy),
   MYSQL_SYSVAR(format),
   MYSQL_SYSVAR(buffer_size),
+  MYSQL_SYSVAR(num_rows_threshold),
   MYSQL_SYSVAR(rotate_on_size),
   MYSQL_SYSVAR(rotations),
   MYSQL_SYSVAR(flush),
