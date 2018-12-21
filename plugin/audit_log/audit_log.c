@@ -1356,7 +1356,7 @@ int audit_log_notify(MYSQL_THD thd MY_ATTRIBUTE((unused)),
     switch (event_general->event_subclass)
     {
     case MYSQL_AUDIT_GENERAL_STATUS:
-      if (local->skip_query && ((event_general->general_rows -1) < audit_log_num_rows_threshold))
+      if (local->skip_query && (((event_general->general_rows - 1) < audit_log_num_rows_threshold) && (audit_log_num_rows_threshold > 0)))
         break;
 
       /* use allocated buffer if available */
