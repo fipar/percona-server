@@ -1345,17 +1345,20 @@ int audit_log_notify(MYSQL_THD thd MY_ATTRIBUTE((unused)),
   if (local->skip_session)
     return 0;
 
+  printf("Before getting the general event\n");
   const struct mysql_event_general *event_general=
     (const struct mysql_event_general *) event;
 
+  printf("Before first comparison against num rows threshold\n");
   if (((event_general->general_rows - 1) < audit_log_num_rows_threshold) && (audit_log_num_rows_threshold > 0))
-    return;
+    return 0;
   
   if (event_class == MYSQL_AUDIT_GENERAL_CLASS)
   {
     switch (event_general->event_subclass)
     {
     case MYSQL_AUDIT_GENERAL_STATUS:
+      printf("Before second comparison against num rows threshold\n");
       if (local->skip_query && (((event_general->general_rows - 1) < audit_log_num_rows_threshold) && (audit_log_num_rows_threshold > 0)))
         break;
 
